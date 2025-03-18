@@ -1,0 +1,285 @@
+clear all
+close all
+format short
+
+% It work for NS u_t + 0.1u_x 
+%% Solve equation u' = i Delta u with boundary condition 
+
+%%=========== Initial informations ========================================  
+  
+ax = 0.0;
+bx = 1.0;
+T = 1;
+N_x = 249; %number of interior points in x-axis
+h = (bx-ax)/(N_x+1);
+CFL = 10; % 
+cases = 2; %1 Dirichlet BC, 2 Periodic BC
+tol = 1e-6;
+
+if cases == 1
+    h = (bx-ax)/(N_x+1);
+    mesh_node = [ax+h:h:bx-h]'; %  \equidistantly spaced in x-direction
+    u0 = exp(-20*(mesh_node-0.5).^2);
+    rho0 = exp(-20*(mesh_node-0.5).^2);
+%     u0 = rand(size(mesh_node));
+    % u0 = normpdf(mesh_node,0.5,1); %normal distribution
+    % u0 = sin(mesh_node*pi); %normal distribution
+    u0 = u0/norm(u0); %by the paper on Krylov Subspace ... 1997
+    rho0 = rho0/norm(rho0);
+    U0 = [rho0;u0];
+%     U0 = U0/norm(U0);    
+elseif cases == 2
+    h = (bx-ax)/(N_x+1);
+    %     A = lap1d_nabla(N_x);
+    mesh_node = [ax:h:bx-h]'; %  equidistantly spaced in x-direction
+    u0 = exp(-20*(mesh_node-0.5).^2);
+    rho0 = exp(-20*(mesh_node-0.5).^2);
+    lengthrho0 = length(rho0);
+%     u0 = rand(size(mesh_node));
+    % u0 = normpdf(mesh_node,0.5,1); %normal distribution
+    % u0 = sin(mesh_node*pi); %normal distribution
+    u0 = u0/norm(u0); %by the paper on Krylov Subspace ... 1997
+    rho0 = rho0/norm(rho0);
+    U0 = [rho0;u0];
+%     U0 = U0/norm(U0);
+    N_x = N_x + 1;    
+end
+
+
+nu = ((0.5*h)/4);
+
+% Compute time step 
+
+k = CFL*h;
+k_ori = k;
+% % %
+
+
+% Compute matrix A
+A1 = matrixA1(u0,cases);
+A2 = matrixA2(u0,cases);
+A3 = matrixA3(rho0,cases);
+A4 = matrixA4(rho0,cases);
+A5 = -lap1d_nabla(N_x,cases);
+A6 = -0.1*lap1d_nabla(N_x,cases);
+A7 = nu*lap1d(N_x,cases);
+A = [A1+A2 A3+A4;A5 A6+A7];
+I = eye(size(A));
+% Compute vector F
+F1 = vectorF1(rho0,u0,cases);
+F2 = vectorF2(rho0,u0,nu,cases);
+F = [ F1 ; F2 ];
+
+%%=========== Integrating in time ========================================
+% 
+for i = 1:5
+    
+    %%=========== Compute reference solution ========================================
+    
+    step = k/800;
+    t = 0:step:k;
+    [ rho_ref, u_ref ] = RK4(cases,nu,t,rho0,u0);
+    U_ref = [rho_ref;u_ref];
+
+    % %=========== Run simulation ==============================================
+    % %=========== 1/ Using Krylov subspace methods ============================
+    
+    norm_F = norm(F);
+    [w1,its] = Krylov(k,A,F/norm_F,10,1);
+    w1 = norm_F*w1;
+    U1 = U0 + k*w1;
+    error = norm(U_ref-U1)
+    vec_err1(i) = error;
+    vec_its1(i) = its;
+    
+% %     Krylov by N W
+    % vec_err1b = zeros(max_degree,1);
+    % vec_its1b = zeros(max_degree,1);
+    % u = [zeros(size(F,1),1) F];
+    % for j = 1:max_degree
+    %     [w, stats] = phipm(k, A, u, 1e-10);
+    %     U1 = U0 + w;
+    %     error = norm(U_ref-U1)
+    %     vec_err1b(j) = error;
+    %     vec_its1b(j) = stats(3);
+    % end
+% %     
+    
+    vectork(i) = k;
+    k = k/2;
+end
+    
+k = k_ori;
+
+for i = 1:5
+    
+    %%=========== Compute reference solution ========================================
+    
+    step = k/800;
+    t = 0:step:k;
+    [ rho_ref, u_ref ] = RK4(cases,nu,t,rho0,u0);
+    U_ref = [rho_ref;u_ref];
+    
+    % %=========== Run simulation ==============================================
+    % %%=========== 2/ Using Chebyshev methods =================================
+    
+    norm_F = norm(F);
+    for j=1:10
+        [w2 , its] = Chebyshevv(k,A,F/norm_F,j);
+        w2 = norm_F*w2;
+        U1 = U0 + k*w2;
+        error = norm(U_ref-U1)
+        vec_err2(i,j) = error;
+        vec_its2(i,j) = its;
+    end
+        
+    vectork(i) = k;
+    k = k/2;
+end
+
+vec_err2 = transpose(vec_err2);
+vec_err2 = min(vec_err2);
+    
+%     % %%=========== 3/ Using RK4 ===============================================  
+% 
+
+k = k_ori;
+
+standard = k;
+for i = 1:200
+    t = 0:standard:k;
+    [ rho_rk4, u_rk4 ] = RK4(cases,nu,t,rho0,u0);
+    U_rk4 = [rho_rk4;u_rk4];
+    vecerror3(i) = norm(U_ref-U_rk4);
+    vec_m4(i) = 4*(length(t)-1);
+    if ( vecerror3(i) < tol )
+        vec_m4(i) = 4*(length(t)-1);
+        break;
+    elseif ( vecerror3(i) >= tol )
+        standard = k/(i+1);
+    end
+end
+
+% 
+%     %%=========== 4/ Using Leja methods =============================================== 
+
+k = k_ori;
+for i = 1:5
+
+    %%=========== Compute reference solution ========================================
+    
+    step = k/800;
+    t = 0:step:k;
+    [ rho_ref, u_ref ] = RK4(cases,nu,t,rho0,u0);
+    U_ref = [rho_ref;u_ref];
+
+    v = U0;
+    mu = full( trace( A ) ) / length( A );
+    B = A - mu * speye( size( A ) );
+    skewness = ishermitian( A,'nonskew' ) - ishermitian( A,'skew' );
+    w = v / norm( v );
+    if skewness ~= -1
+        nu1 = normest_sym( B, w,  1, 5e-4 ) / 2;
+    else
+        nu1 = 0;
+    end
+    if skewness ~= 1
+        beta = normest_sym( B, w, -1, 5e-4 ) / 2;
+    else
+        beta = 0;
+    end
+    isreal = ( nu1 >= beta );
+
+    if isreal
+        norm_F = norm(F);
+        [p,m] = real_leja(k, A, F/norm(F) , 1e-6);
+        p = norm_F*p;
+    else
+    %     [p,m] = cplx_leja1(k, A, F, 1e-6);
+        norm_F = norm(F);  
+        [p,m] = cplx_leja(k, A, F/norm(F), 1e-8);
+    %     [p,m] = cplx_leja1(k, A, F/norm(F), 1e-6);
+        p = norm_F*p;
+    %     [p,m] = cplx_leja(k, A, F, 1e-6*0.001);
+    end
+
+    U1 = U0 + k*p;
+
+    vec_err4(i) = norm(U_ref-U1)
+
+    vectork(i) = k;
+    k = k/2;
+    
+end
+%%=========== compare ====================================================  
+
+% figure 
+% loglog(vec_m4(1:end),vecerror3(1:end),'k');
+% 
+% hold on
+% loglog(vec_m4(1:end),(4./vec_m4(1:end)).^4,'r');
+% xlabel('evaluations of vector F');
+% ylabel('Error');
+% str=sprintf('RK4');
+% title(str);
+% legend('RK4','f(h) = c*k^4','FontSize',14 );
+% set(gca,'FontSize',12)
+
+
+
+figure 
+loglog( vectork, vec_err1,'-g.',...
+    'LineWidth',1,...
+    'MarkerEdgeColor','g',...
+    'MarkerFaceColor',[.49 1 .63],...
+    'MarkerSize',5);
+hold on
+loglog(vectork, vectork.^2,'-b.',...
+    'LineWidth',1,...
+    'MarkerEdgeColor','b',...
+    'MarkerFaceColor',[.49 1 .63],...
+    'MarkerSize',5);
+loglog(vectork, vectork.^3,'-r.',...
+    'LineWidth',1,...
+    'MarkerEdgeColor','r',...
+    'MarkerFaceColor',[.49 1 .63],...
+    'MarkerSize',5);
+loglog(vectork, vec_err2,'-m.',...
+    'LineWidth',1,...
+    'MarkerEdgeColor','m',...
+    'MarkerFaceColor',[.49 1 .63],...
+    'MarkerSize',5);
+semilogy(vectork, vec_err4,'-c*',...
+    'LineWidth',1,...
+    'MarkerEdgeColor','c',...
+    'MarkerFaceColor',[.49 1 .63],...
+    'MarkerSize',5);
+
+% semilogy(m, err,'-mx',...
+%     'LineWidth',1,...
+%     'MarkerEdgeColor','m',...
+%     'MarkerFaceColor',[.49 1 .63],...
+%     'MarkerSize',20);
+
+
+hold off 
+xlabel('h');
+ylabel('Error');
+% str=sprintf('Kappa = %.3f',kappa);
+% title(str);
+title('Errors');
+legend('Krylov','f(h) = c*h^2','f(h) = c*h^3','Chebyshev','Leja','FontSize',14);
+
+% legend('Krylov','Chebyshev','Leja-Hermite','Leja','FontSize',14);
+set(gca,'FontSize',12)
+
+mm  = eig(k*A);
+figure
+plot(real(mm),imag(mm),'*')
+xlabel('Real z');
+ylabel('Imag z');
+set(gca,'FontSize',12)
+title('spectrum of kA = kJ(U^n)');
+
+
+
